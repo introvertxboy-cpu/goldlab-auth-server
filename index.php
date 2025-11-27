@@ -11,17 +11,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
 // Route requests
 $path = $_SERVER['REQUEST_URI'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
+$input = file_get_contents('php://input');
 
-// Handle login requests
-if ($method === 'POST') {
-    // Get POST data
-    $input = file_get_contents('php://input');
-    $data = json_decode($input, true);
+// Parse input data
+$data = json_decode($input, true);
+if (!$data) {
+    parse_str($input, $data);
+}
+
+error_log("Request - Method: $method, Path: $path, Data: " . json_encode($data));
+
+// Handle LOGOUT requests (from Android app)
+if ($method === 'POST' && isset($data['deviceId']) && !isset($data['name'])) {
+    $deviceId = $data['deviceId'] ?? '';
     
-    if (!$data) {
-        parse_str($input, $data);
-    }
+    error_log("Logout attempt - Device: $deviceId");
     
+    // Logout logic - typically you would:
+    // 1. Remove device from active sessions in database
+    // 2. Clear session tokens
+    // 3. Update user status
+    
+    // For now, just return success
+    $response = [
+        'error' => false,
+        'message' => 'Logout Successfull'
+    ];
+    
+    echo json_encode($response);
+    exit;
+}
+
+// Handle LOGIN requests
+if ($method === 'POST' && isset($data['name'])) {
     $username = $data['name'] ?? '';
     $password = $data['password'] ?? '';
     $deviceId = $data['deviceId'] ?? '';
@@ -65,6 +87,9 @@ if ($method === 'POST') {
 echo json_encode([
     'status' => 'GoldLab Auth Server is running',
     'timestamp' => date('Y-m-d H:i:s'),
-    'endpoint' => 'POST to this URL with name, password, deviceId'
+    'endpoints' => [
+        'login' => 'POST with name, password, deviceId',
+        'logout' => 'POST with deviceId'
+    ]
 ]);
 ?>

@@ -1,31 +1,70 @@
 <?php
-header('Content-Type: text/plain');
+header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    exit();
+    exit(0);
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $raw_data = file_get_contents("php://input");
-    $post_data = array();
-    parse_str($raw_data, $post_data);
+// Route requests
+$path = $_SERVER['REQUEST_URI'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'];
+
+// Handle login requests
+if ($method === 'POST') {
+    // Get POST data
+    $input = file_get_contents('php://input');
+    $data = json_decode($input, true);
     
-    if (isset($post_data['deviceId'])) {
-        $deviceId = $post_data['deviceId'];
-        error_log("Logout successful for device: " . $deviceId);
-        
-        // Your logout logic here
-        
-        echo "Logout Successfull";
-    } else {
-        http_response_code(400);
-        echo "Error: deviceId required";
+    if (!$data) {
+        parse_str($input, $data);
     }
-} else {
-    http_response_code(405);
-    echo "Method not allowed";
+    
+    $username = $data['name'] ?? '';
+    $password = $data['password'] ?? '';
+    $deviceId = $data['deviceId'] ?? '';
+    
+    error_log("Login attempt - Username: $username, Device: $deviceId");
+    
+    // Simple authentication
+    $valid_users = [
+        'admin' => 'admin123',
+        'user' => 'user123', 
+        'test' => 'test123'
+    ];
+    
+    if (isset($valid_users[$username]) && $valid_users[$username] === $password) {
+        // Login successful
+        $response = [
+            'error' => false,
+            'message' => 'Login successful',
+            'user' => [
+                'id' => 1,
+                'name' => $username,
+                'email' => $username . '@goldlab.com',
+                'gender' => 'male',
+                'deviceId' => $deviceId,
+                'status' => '1'
+            ]
+        ];
+    } else {
+        // Login failed
+        $response = [
+            'error' => true,
+            'message' => 'Invalid username or password'
+        ];
+    }
+    
+    echo json_encode($response);
+    exit;
 }
+
+// Default response for other requests
+echo json_encode([
+    'status' => 'GoldLab Auth Server is running',
+    'timestamp' => date('Y-m-d H:i:s'),
+    'endpoint' => 'POST to this URL with name, password, deviceId'
+]);
 ?>

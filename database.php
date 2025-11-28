@@ -30,9 +30,6 @@ class Database {
             FOREIGN KEY(user_id) REFERENCES users(id)
         )");
         
-        // Create index for better performance
-        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_user_active ON user_sessions(user_id, is_active)");
-        
         $this->createDefaultUsers();
     }
     
@@ -62,20 +59,15 @@ class Database {
         return false;
     }
     
-    // Create a new login session - ONLY ONE DEVICE PER USER
+    // Create a new login session - AUTO LOGOUT FROM OTHER DEVICES
     public function createSession($user_id, $device_id) {
-        // First, logout ALL active sessions for this user
-        $this->logoutAllUserSessions($user_id);
+        // Logout from all other devices for this user
+        $stmt = $this->pdo->prepare("UPDATE user_sessions SET is_active = 0, logout_time = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1");
+        $stmt->execute([$user_id]);
         
-        // Then create new session for the current device
+        // Create new session for current device
         $stmt = $this->pdo->prepare("INSERT INTO user_sessions (user_id, device_id) VALUES (?, ?)");
         return $stmt->execute([$user_id, $device_id]);
-    }
-    
-    // Logout ALL sessions for a specific user
-    public function logoutAllUserSessions($user_id) {
-        $stmt = $this->pdo->prepare("UPDATE user_sessions SET is_active = 0, logout_time = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1");
-        return $stmt->execute([$user_id]);
     }
     
     // Logout session for a specific device
@@ -93,29 +85,12 @@ class Database {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
-    // Check if user already has an active session on any device
-    public function getUserActiveSession($user_id) {
-        $stmt = $this->pdo->prepare("SELECT * FROM user_sessions WHERE user_id = ? AND is_active = 1 LIMIT 1");
-        $stmt->execute([$user_id]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
-    }
-    
-    // Get all active sessions (for admin purposes)
-    public function getActiveSessions() {
-        $stmt = $this->pdo->prepare("SELECT u.username, s.device_id, s.login_time 
-                                   FROM user_sessions s 
-                                   JOIN users u ON s.user_id = u.id 
-                                   WHERE s.is_active = 1");
-        $stmt->execute();
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-    
-    // Get user's active device
-    public function getUserActiveDevice($user_id) {
-        $stmt = $this->pdo->prepare("SELECT device_id FROM user_sessions WHERE user_id = ? AND is_active = 1");
+    // Check if user has active session on ANY device
+    public function hasActiveSession($user_id) {
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) as count FROM user_sessions WHERE user_id = ? AND is_active = 1");
         $stmt->execute([$user_id]);
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $result ? $result['device_id'] : null;
+        return $result['count'] > 0;
     }
 }
 ?>

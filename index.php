@@ -28,7 +28,7 @@ class Database {
             $this->createTables();
         } catch (PDOException $e) {
             error_log("Database connection failed: " . $e->getMessage());
-            // Continue without database - use simple auth as fallback
+            throw new Exception("Database unavailable");
         }
     }
     
@@ -53,7 +53,9 @@ class Database {
                 is_active TINYINT(1) DEFAULT 1,
                 login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 logout_time TIMESTAMP NULL,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_user_active (user_id, is_active),
+                INDEX idx_device (device_id)
             ) ENGINE=InnoDB
         ");
         
@@ -85,14 +87,27 @@ class Database {
         return false;
     }
     
+    // Check if user is already logged in on any device
+    public function isUserAlreadyLoggedIn($user_id) {
+        $stmt = $this->pdo->prepare("SELECT device_id FROM user_sessions WHERE user_id = ? AND is_active = 1 LIMIT 1");
+        $stmt->execute([$user_id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    // Create new session and logout all other devices
     public function createSession($user_id, $device_id) {
-        // Logout from all other devices for this user
+        // Logout from ALL other devices for this user
         $stmt = $this->pdo->prepare("UPDATE user_sessions SET is_active = 0, logout_time = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1");
         $stmt->execute([$user_id]);
         
-        // Create new session
+        // Create new session for current device
         $stmt = $this->pdo->prepare("INSERT INTO user_sessions (user_id, device_id) VALUES (?, ?)");
         return $stmt->execute([$user_id, $device_id]);
+    }
+    
+    // Force login - kick out other devices and login on current device
+    public function forceLogin($user_id, $device_id) {
+        return $this->createSession($user_id, $device_id);
     }
     
     public function logoutSession($device_id) {
@@ -100,10 +115,12 @@ class Database {
         return $stmt->execute([$device_id]);
     }
     
-    public function isUserLoggedInElsewhere($user_id, $current_device_id) {
-        $stmt = $this->pdo->prepare("SELECT device_id FROM user_sessions WHERE user_id = ? AND is_active = 1 AND device_id != ?");
-        $stmt->execute([$user_id, $current_device_id]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+    // Get active device for a user
+    public function getActiveDevice($user_id) {
+        $stmt = $this->pdo->prepare("SELECT device_id FROM user_sessions WHERE user_id = ? AND is_active = 1");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result ? $result['device_id'] : null;
     }
 }
 
@@ -111,121 +128,21 @@ class Database {
 try {
     $db = new Database();
     $databaseEnabled = true;
+    error_log("✅ Database connected - Single device enforcement ACTIVE");
 } catch (Exception $e) {
     $databaseEnabled = false;
-    error_log("Database disabled: " . $e->getMessage());
+    error_log("❌ Database disabled: " . $e->getMessage());
 }
 
 // Route requests
 $path = $_SERVER['REQUEST_URI'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
 
-// Handle login requests
-if ($method === 'POST') {
-    // Get POST data
-    $input = file_get_contents('php://input');
-    $data = json_decode($input, true);
-    
-    if (!$data) {
-        parse_str($input, $data);
-    }
-    
-    $username = $data['name'] ?? '';
-    $password = $data['password'] ?? '';
-    $deviceId = $data['deviceId'] ?? '';
-    
-    error_log("Login attempt - Username: $username, Device: $deviceId, DB: " . ($databaseEnabled ? "Enabled" : "Disabled"));
-    
-    // Simple authentication as fallback
-    $valid_users = [
-        'admin' => 'admin123',
-        'user' => 'user123', 
-        'test' => 'test123'
-    ];
-    
-    $authenticated = isset($valid_users[$username]) && $valid_users[$username] === $password;
-    
-    if ($authenticated) {
-        // Login successful
-        if ($databaseEnabled) {
-            try {
-                // Use database for session management
-                $user = $db->authenticate($username, $password);
-                if ($user) {
-                    // Check if user is already logged in on another device
-                    $existingSession = $db->isUserLoggedInElsewhere($user['id'], $deviceId);
-                    
-                    if ($existingSession) {
-                        $response = [
-                            'error' => true,
-                            'message' => 'User already logged in on another device',
-                            'database' => 'active'
-                        ];
-                    } else {
-                        // Create new session
-                        $db->createSession($user['id'], $deviceId);
-                        
-                        $response = [
-                            'error' => false,
-                            'message' => 'Login successful (Database)',
-                            'user' => [
-                                'id' => $user['id'],
-                                'name' => $user['username'],
-                                'email' => $user['email'],
-                                'gender' => 'male',
-                                'deviceId' => $deviceId,
-                                'status' => '1'
-                            ],
-                            'database' => 'active'
-                        ];
-                    }
-                } else {
-                    throw new Exception("Database authentication failed");
-                }
-            } catch (Exception $e) {
-                error_log("Database error, using simple auth: " . $e->getMessage());
-                // Fallback to simple authentication
-                $response = [
-                    'error' => false,
-                    'message' => 'Login successful (Simple Auth)',
-                    'user' => [
-                        'id' => 1,
-                        'name' => $username,
-                        'email' => $username . '@goldlab.com',
-                        'gender' => 'male',
-                        'deviceId' => $deviceId,
-                        'status' => '1'
-                    ],
-                    'database' => 'fallback'
-                ];
-            }
-        } else {
-            // No database - use simple authentication
-            $response = [
-                'error' => false,
-                'message' => 'Login successful (Simple Auth)',
-                'user' => [
-                    'id' => 1,
-                    'name' => $username,
-                    'email' => $username . '@goldlab.com',
-                    'gender' => 'male',
-                    'deviceId' => $deviceId,
-                    'status' => '1'
-                ],
-                'database' => 'disabled'
-            ];
-        }
-    } else {
-        // Login failed
-        $response = [
-            'error' => true,
-            'message' => 'Invalid username or password',
-            'database' => $databaseEnabled ? 'active' : 'disabled'
-        ];
-    }
-    
-    echo json_encode($response);
-    exit;
+// Get POST data
+$input = file_get_contents('php://input');
+$data = json_decode($input, true);
+if (!$data) {
+    parse_str($input, $data);
 }
 
 // Handle logout requests
@@ -246,11 +163,151 @@ if ($method === 'POST' && isset($data['deviceId']) && !isset($data['name'])) {
     exit;
 }
 
+// Handle login requests
+if ($method === 'POST' && isset($data['name'])) {
+    $username = $data['name'] ?? '';
+    $password = $data['password'] ?? '';
+    $deviceId = $data['deviceId'] ?? '';
+    $forceLogin = isset($data['forceLogin']) && $data['forceLogin'] === 'true';
+    
+    error_log("Login attempt - Username: $username, Device: $deviceId, Force: " . ($forceLogin ? "Yes" : "No"));
+    
+    if (!$databaseEnabled) {
+        // Fallback to simple authentication without device限制
+        $valid_users = [
+            'admin' => 'admin123',
+            'user' => 'user123', 
+            'test' => 'test123'
+        ];
+        
+        if (isset($valid_users[$username]) && $valid_users[$username] === $password) {
+            $response = [
+                'error' => false,
+                'message' => 'Login successful (No database - multiple devices allowed)',
+                'user' => [
+                    'id' => 1,
+                    'name' => $username,
+                    'email' => $username . '@goldlab.com',
+                    'gender' => 'male',
+                    'deviceId' => $deviceId,
+                    'status' => '1'
+                ],
+                'database' => 'disabled'
+            ];
+        } else {
+            $response = [
+                'error' => true,
+                'message' => 'Invalid username or password'
+            ];
+        }
+        
+        echo json_encode($response);
+        exit;
+    }
+    
+    // DATABASE ENABLED - SINGLE DEVICE ENFORCEMENT
+    try {
+        $user = $db->authenticate($username, $password);
+        
+        if ($user) {
+            // Check if user is already logged in on another device
+            $activeDevice = $db->getActiveDevice($user['id']);
+            
+            if ($activeDevice) {
+                // User is already logged in elsewhere
+                if ($activeDevice === $deviceId) {
+                    // Same device - allow login (renew session)
+                    $db->createSession($user['id'], $deviceId);
+                    
+                    $response = [
+                        'error' => false,
+                        'message' => 'Login successful (Session renewed)',
+                        'user' => [
+                            'id' => $user['id'],
+                            'name' => $user['username'],
+                            'email' => $user['email'],
+                            'gender' => 'male',
+                            'deviceId' => $deviceId,
+                            'status' => '1'
+                        ],
+                        'database' => 'active'
+                    ];
+                } else {
+                    // Different device - check if force login is requested
+                    if ($forceLogin) {
+                        // Force login - kick out the other device
+                        $db->forceLogin($user['id'], $deviceId);
+                        
+                        $response = [
+                            'error' => false,
+                            'message' => 'Login successful (Other device was logged out)',
+                            'user' => [
+                                'id' => $user['id'],
+                                'name' => $user['username'],
+                                'email' => $user['email'],
+                                'gender' => 'male',
+                                'deviceId' => $deviceId,
+                                'status' => '1'
+                            ],
+                            'database' => 'active',
+                            'force_login' => true
+                        ];
+                    } else {
+                        // Block login - user is active on another device
+                        $response = [
+                            'error' => true,
+                            'message' => 'Account is already active on another device. Use forceLogin=true to logout other device.',
+                            'current_device' => $activeDevice,
+                            'blocked_reason' => 'multiple_devices'
+                        ];
+                    }
+                }
+            } else {
+                // No active session - allow login
+                $db->createSession($user['id'], $deviceId);
+                
+                $response = [
+                    'error' => false,
+                    'message' => 'Login successful',
+                    'user' => [
+                        'id' => $user['id'],
+                        'name' => $user['username'],
+                        'email' => $user['email'],
+                        'gender' => 'male',
+                        'deviceId' => $deviceId,
+                        'status' => '1'
+                    ],
+                    'database' => 'active'
+                ];
+            }
+        } else {
+            $response = [
+                'error' => true,
+                'message' => 'Invalid username or password'
+            ];
+        }
+    } catch (Exception $e) {
+        error_log("Database error during login: " . $e->getMessage());
+        $response = [
+            'error' => true,
+            'message' => 'Server error - please try again'
+        ];
+    }
+    
+    echo json_encode($response);
+    exit;
+}
+
 // Default response for other requests
 echo json_encode([
     'status' => 'GoldLab Auth Server is running',
     'timestamp' => date('Y-m-d H:i:s'),
     'database' => $databaseEnabled ? 'connected' : 'disabled',
-    'endpoint' => 'POST to this URL with name, password, deviceId'
+    'single_device_enforcement' => $databaseEnabled ? 'ACTIVE' : 'INACTIVE',
+    'endpoints' => [
+        'login' => 'POST with: name, password, deviceId',
+        'force_login' => 'POST with: name, password, deviceId, forceLogin=true',
+        'logout' => 'POST with: deviceId'
+    ]
 ]);
 ?>

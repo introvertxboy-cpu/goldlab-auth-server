@@ -2,98 +2,115 @@
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+// Security headers
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
     exit(0);
 }
 
-file_put_contents('php://stderr', "=== LOGIN ATTEMPT ===\n");
-file_put_contents('php://stderr', "Time: " . date('Y-m-d H:i:s') . "\n");
+// Enhanced logging
+error_log("=== LOGIN.PHP ACCESS ===");
+error_log("Time: " . date('Y-m-d H:i:s'));
+error_log("IP: " . ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'unknown'));
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $name = $_POST['name'] ?? '';
-    $password = $_POST['password'] ?? '';
-    $deviceId = $_POST['deviceId'] ?? '';
-    
-    file_put_contents('php://stderr', "Name: $name, Device: $deviceId\n");
-    
-    if (empty($name) || empty($password) || empty($deviceId)) {
-        file_put_contents('php://stderr', "ERROR: Missing fields\n");
-        echo json_encode([
-            'error' => true,
-            'message' => 'Missing required fields: name, password, deviceId'
-        ]);
-        exit;
+try {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        throw new Exception('Only POST method allowed', 405);
     }
-    
+
+    // Get input data
+    $input = getInputData();
+    $name = $input['name'] ?? '';
+    $password = $input['password'] ?? '';
+    $deviceId = $input['deviceId'] ?? '';
+
+    error_log("Login attempt - Name: $name, Device: $deviceId");
+
+    // Validate input
+    if (empty($name) || empty($password) || empty($deviceId)) {
+        throw new Exception('Missing required fields: name, password, deviceId', 400);
+    }
+
+    // Simple authentication (Replace with database later)
     $valid_users = [
         'testuser' => [
             'password' => 'testpass', 
             'email' => 'test@example.com', 
             'gender' => 'male', 
-            'id' => 1,
-            'deviceId' => '',
-            'status' => '0'
+            'id' => 1
         ],
         'admin' => [
             'password' => 'admin123', 
             'email' => 'admin@example.com', 
             'gender' => 'male', 
-            'id' => 2,
-            'deviceId' => '',
-            'status' => '0'
+            'id' => 2
         ],
     ];
-    
+
     if (isset($valid_users[$name]) && $password === $valid_users[$name]['password']) {
         $user = $valid_users[$name];
+        error_log("SUCCESS: Login approved for $name with device $deviceId");
         
-        $current_device = $user['deviceId'];
-        $current_status = $user['status'];
-        
-        file_put_contents('php://stderr', "Current device: $current_device, Status: $current_status\n");
-        
-        if (!empty($current_device) && $current_device !== $deviceId && $current_status === '1') {
-            file_put_contents('php://stderr', "BLOCKED: Another device ($current_device) is logged in\n");
-            
-            echo json_encode([
-                'error' => true,
-                'message' => 'Another device is already logged in. Please logout first.'
-            ]);
-        } else {
-            $valid_users[$name]['deviceId'] = $deviceId;
-            $valid_users[$name]['status'] = '1';
-            
-            file_put_contents('php://stderr', "SUCCESS: Login approved for device $deviceId\n");
-            
-            echo json_encode([
-                'error' => false,
-                'message' => 'Login successful',
-                'user' => [
-                    'id' => $user['id'],
-                    'name' => $name,
-                    'email' => $user['email'],
-                    'gender' => $user['gender'],
-                    'deviceId' => $deviceId,
-                    'status' => '1'
-                ]
-            ]);
-        }
-        
+        sendResponse([
+            'error' => false,
+            'message' => 'Login successful',
+            'user' => [
+                'id' => $user['id'],
+                'name' => $name,
+                'email' => $user['email'],
+                'gender' => $user['gender'],
+                'deviceId' => $deviceId,
+                'status' => '1'
+            ]
+        ], 200);
     } else {
-        file_put_contents('php://stderr', "FAILED: Invalid credentials for $name\n");
-        
-        echo json_encode([
-            'error' => true,
-            'message' => 'Invalid username or password'
-        ]);
+        error_log("FAILED: Invalid credentials for $name");
+        throw new Exception('Invalid username or password', 401);
+    }
+
+} catch (Exception $e) {
+    error_log("ERROR: " . $e->getMessage());
+    sendError($e->getMessage(), $e->getCode() ?: 500);
+}
+
+/**
+ * Get input data from JSON or form data
+ */
+function getInputData() {
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    
+    if (strpos($contentType, 'application/json') !== false) {
+        $input = json_decode(file_get_contents('php://input'), true);
+        return $input ?? [];
     }
     
-} else {
+    return $_POST;
+}
+
+/**
+ * Send success response
+ */
+function sendResponse($data, $code = 200) {
+    http_response_code($code);
+    echo json_encode($data, JSON_PRETTY_PRINT);
+    exit;
+}
+
+/**
+ * Send error response
+ */
+function sendError($message, $code = 500) {
+    http_response_code($code);
     echo json_encode([
         'error' => true,
-        'message' => 'Only POST method allowed'
-    ]);
+        'message' => $message,
+        'code' => $code,
+        'timestamp' => date('c')
+    ], JSON_PRETTY_PRINT);
+    exit;
 }
 ?>

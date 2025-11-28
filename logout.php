@@ -14,10 +14,12 @@ $db_name = getenv('MYSQLDATABASE') ?: 'goldlab_auth';
 $db_user = getenv('MYSQLUSER') ?: 'root';
 $db_pass = getenv('MYSQLPASSWORD') ?: '';
 
+error_log("=== LOGOUT ATTEMPT ===");
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $deviceId = $_POST['deviceId'] ?? '';
     
-    error_log("Logout attempt for device: $deviceId");
+    error_log("Device: $deviceId");
     
     if (empty($deviceId)) {
         echo json_encode(['error' => true, 'message' => 'Device ID required']);

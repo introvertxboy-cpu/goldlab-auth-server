@@ -22,18 +22,25 @@ try {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $input = file_get_contents('php://input');
-$data = json_decode($input, true);
-if (!$data) {
-    parse_str($input, $data);
+
+// Parse input data - handle both JSON and form data
+$data = [];
+if (!empty($input)) {
+    $data = json_decode($input, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        parse_str($input, $data);
+    }
 }
 
-error_log("Request - Method: $method, Data: " . json_encode($data));
+error_log("=== NEW REQUEST ===");
+error_log("Method: " . $method);
+error_log("Data: " . print_r($data, true));
 
 // Handle LOGOUT requests
 if ($method === 'POST' && isset($data['deviceId']) && !isset($data['name'])) {
     $deviceId = $data['deviceId'] ?? '';
     
-    error_log("Logout attempt - Device: $deviceId");
+    error_log("Logout request for device: " . $deviceId);
     
     if ($db->logoutSession($deviceId)) {
         $response = [
@@ -43,7 +50,7 @@ if ($method === 'POST' && isset($data['deviceId']) && !isset($data['name'])) {
     } else {
         $response = [
             'error' => true,
-            'message' => 'Logout failed - no active session'
+            'message' => 'No active session found'
         ];
     }
     
@@ -52,49 +59,24 @@ if ($method === 'POST' && isset($data['deviceId']) && !isset($data['name'])) {
 }
 
 // Handle LOGIN requests
-if ($method === 'POST' && isset($data['name'])) {
+if ($method === 'POST' && isset($data['name']) && isset($data['password'])) {
     $username = $data['name'] ?? '';
     $password = $data['password'] ?? '';
-    $deviceId = $data['deviceId'] ?? '';
+    $deviceId = $data['deviceId'] ?? 'unknown_device';
     
-    error_log("Login attempt - Username: $username, Device: $deviceId");
+    error_log("Login attempt - Username: " . $username . ", Device: " . $deviceId);
     
+    // Authenticate user
     $user = $db->authenticate($username, $password);
     
     if ($user) {
-        // Check if user is already logged in on another device
-        $existingSession = $db->getUserActiveSession($user['id']);
+        error_log("Authentication successful for user: " . $username);
         
-        if ($existingSession) {
-            $existingDevice = $existingSession['device_id'];
-            
-            // If trying to login from same device, allow it
-            if ($existingDevice === $deviceId) {
-                $response = [
-                    'error' => false,
-                    'message' => 'Login successful',
-                    'user' => [
-                        'id' => $user['id'],
-                        'name' => $user['username'],
-                        'email' => $user['email'],
-                        'gender' => 'male',
-                        'deviceId' => $deviceId,
-                        'status' => '1'
-                    ]
-                ];
-            } else {
-                // User is already logged in on another device
-                $response = [
-                    'error' => true,
-                    'message' => 'Account is already active on another device. Please logout from the other device first.'
-                ];
-                
-                echo json_encode($response);
-                exit;
-            }
-        } else {
-            // No existing session, create new one
-            $db->createSession($user['id'], $deviceId);
+        // Create new session (automatically logs out other devices)
+        $sessionCreated = $db->createSession($user['id'], $deviceId);
+        
+        if ($sessionCreated) {
+            error_log("Session created successfully for device: " . $deviceId);
             
             $response = [
                 'error' => false,
@@ -108,45 +90,15 @@ if ($method === 'POST' && isset($data['name'])) {
                     'status' => '1'
                 ]
             ];
+        } else {
+            error_log("Failed to create session for device: " . $deviceId);
+            $response = [
+                'error' => true,
+                'message' => 'Failed to create session'
+            ];
         }
     } else {
-        $response = [
-            'error' => true,
-            'message' => 'Invalid username or password'
-        ];
-    }
-    
-    echo json_encode($response);
-    exit;
-}
-
-// Handle FORCE LOGIN - allows login and kicks out other devices
-if ($method === 'POST' && isset($data['name']) && isset($data['forceLogin']) && $data['forceLogin'] === 'true') {
-    $username = $data['name'] ?? '';
-    $password = $data['password'] ?? '';
-    $deviceId = $data['deviceId'] ?? '';
-    
-    error_log("Force login attempt - Username: $username, Device: $deviceId");
-    
-    $user = $db->authenticate($username, $password);
-    
-    if ($user) {
-        // Force logout from all other devices and login on current device
-        $db->createSession($user['id'], $deviceId);
-        
-        $response = [
-            'error' => false,
-            'message' => 'Login successful (other devices were logged out)',
-            'user' => [
-                'id' => $user['id'],
-                'name' => $user['username'],
-                'email' => $user['email'],
-                'gender' => 'male',
-                'deviceId' => $deviceId,
-                'status' => '1'
-            ]
-        ];
-    } else {
+        error_log("Authentication failed for user: " . $username);
         $response = [
             'error' => true,
             'message' => 'Invalid username or password'
@@ -165,12 +117,7 @@ if ($method === 'GET' && isset($_GET['deviceId'])) {
     if ($user) {
         $response = [
             'error' => false,
-            'user' => [
-                'id' => $user['id'],
-                'name' => $user['username'],
-                'email' => $user['email'],
-                'deviceId' => $deviceId
-            ],
+            'user' => $user,
             'message' => 'Active session found'
         ];
     } else {
@@ -184,51 +131,14 @@ if ($method === 'GET' && isset($_GET['deviceId'])) {
     exit;
 }
 
-// Handle CHECK USER SESSION - check if user has active session on any device
-if ($method === 'GET' && isset($_GET['username'])) {
-    $username = $_GET['username'] ?? '';
-    
-    $user = $db->authenticate($username, ''); // We just need user ID
-    if ($user) {
-        $activeDevice = $db->getUserActiveDevice($user['id']);
-        
-        if ($activeDevice) {
-            $response = [
-                'error' => false,
-                'hasActiveSession' => true,
-                'activeDevice' => $activeDevice,
-                'message' => 'User has active session on device: ' . $activeDevice
-            ];
-        } else {
-            $response = [
-                'error' => false,
-                'hasActiveSession' => false,
-                'message' => 'No active session for this user'
-            ];
-        }
-    } else {
-        $response = [
-            'error' => true,
-            'message' => 'User not found'
-        ];
-    }
-    
-    echo json_encode($response);
-    exit;
-}
-
 // Default response
 echo json_encode([
     'status' => 'GoldLab Auth Server is running',
     'timestamp' => date('Y-m-d H:i:s'),
-    'database' => 'SQLite',
-    'features' => 'Single device per user enforced',
     'endpoints' => [
-        'login' => 'POST with name, password, deviceId',
-        'force_login' => 'POST with name, password, deviceId, forceLogin=true',
-        'logout' => 'POST with deviceId',
-        'check_session' => 'GET with deviceId parameter',
-        'check_user' => 'GET with username parameter'
+        'login' => 'POST with: name, password, deviceId',
+        'logout' => 'POST with: deviceId',
+        'check_session' => 'GET with: deviceId parameter'
     ]
 ]);
 ?>

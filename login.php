@@ -15,15 +15,14 @@ $db_name = getenv('MYSQLDATABASE') ?: 'goldlab_auth';
 $db_user = getenv('MYSQLUSER') ?: 'root';
 $db_pass = getenv('MYSQLPASSWORD') ?: '';
 
-// Simple debug
-error_log("Login attempt started");
+error_log("=== LOGIN ATTEMPT ===");
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $name = $_POST['name'] ?? '';
     $password = $_POST['password'] ?? '';
     $deviceId = $_POST['deviceId'] ?? '';
     
-    error_log("Data received: $name, $deviceId");
+    error_log("Data: $name, Device: $deviceId");
     
     // Input validation
     if (empty($name) || empty($password) || empty($deviceId)) {

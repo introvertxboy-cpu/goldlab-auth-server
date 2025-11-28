@@ -8,21 +8,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
     exit(0);
 }
 
-// Database connection
-$servername = getenv('MYSQLHOST') ?: 'localhost';
-$db_port = getenv('MYSQLPORT') ?: '3306';
-$db_name = getenv('MYSQLDATABASE') ?: 'goldlab_auth';
-$db_user = getenv('MYSQLUSER') ?: 'root';
-$db_pass = getenv('MYSQLPASSWORD') ?: '';
+error_log("=== LOGIN DEBUG START ===");
 
-error_log("=== LOGIN ATTEMPT ===");
+// Get all environment variables for debugging
+$mysql_host = getenv('MYSQLHOST');
+$mysql_port = getenv('MYSQLPORT');
+$mysql_db = getenv('MYSQLDATABASE');
+$mysql_user = getenv('MYSQLUSER');
+$mysql_pass = getenv('MYSQLPASSWORD');
+
+error_log("MYSQLHOST: " . ($mysql_host ?: 'NOT SET'));
+error_log("MYSQLPORT: " . ($mysql_port ?: 'NOT SET'));
+error_log("MYSQLDATABASE: " . ($mysql_db ?: 'NOT SET'));
+error_log("MYSQLUSER: " . ($mysql_user ?: 'NOT SET'));
+error_log("MYSQLPASSWORD: " . ($mysql_pass ? 'SET' : 'NOT SET'));
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $name = $_POST['name'] ?? '';
     $password = $_POST['password'] ?? '';
     $deviceId = $_POST['deviceId'] ?? '';
     
-    error_log("Data: $name, Device: $deviceId");
+    error_log("Login attempt: $name, $deviceId");
     
     // Input validation
     if (empty($name) || empty($password) || empty($deviceId)) {
@@ -33,13 +39,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit;
     }
     
+    // Try database connection
     try {
-        // Connect to database
-        $conn = new mysqli($servername, $db_user, $db_pass, $db_name, $db_port);
+        $conn = new mysqli($mysql_host, $mysql_user, $mysql_pass, $mysql_db, $mysql_port);
         
         if ($conn->connect_error) {
+            error_log("Database connection failed: " . $conn->connect_error);
             throw new Exception('Database connection failed');
         }
+        
+        error_log("Database connected successfully!");
+        
+        // Check if users table exists
+        $table_check = $conn->query("SHOW TABLES LIKE 'users'");
+        if ($table_check->num_rows === 0) {
+            error_log("ERROR: 'users' table does not exist!");
+            echo json_encode([
+                'error' => true,
+                'message' => 'Database not properly setup'
+            ]);
+            exit;
+        }
+        
+        error_log("Users table exists, checking user...");
         
         // Check if user exists
         $stmt = $conn->prepare("SELECT id, name, email, password, gender, deviceId, status FROM users WHERE name = ?");
@@ -48,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $result = $stmt->get_result();
         
         if ($result->num_rows === 0) {
+            error_log("User not found: $name");
             echo json_encode([
                 'error' => true,
                 'message' => 'Invalid username or password'
@@ -56,15 +79,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         $user = $result->fetch_assoc();
+        error_log("User found: " . $user['name']);
         
         // Verify password
         if ($password !== $user['password']) {
+            error_log("Wrong password for: $name");
             echo json_encode([
                 'error' => true,
                 'message' => 'Invalid username or password'
             ]);
             exit;
         }
+        
+        error_log("Password correct, checking device...");
         
         // Device ID check
         $current_device = $user['deviceId'];
@@ -107,10 +134,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $conn->close();
         
     } catch (Exception $e) {
-        error_log("ERROR: " . $e->getMessage());
+        error_log("EXCEPTION: " . $e->getMessage());
         echo json_encode([
             'error' => true,
-            'message' => 'Server error'
+            'message' => 'Server error: ' . $e->getMessage()
         ]);
     }
     
@@ -120,4 +147,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         'message' => 'Only POST method allowed'
     ]);
 }
+
+error_log("=== LOGIN DEBUG END ===");
 ?>

@@ -1,8 +1,70 @@
 <?php
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+    exit(0);
+}
+
+// Route requests
+$path = $_SERVER['REQUEST_URI'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'];
+
+// Handle login requests
+if ($method === 'POST') {
+    // Get POST data
+    $input = file_get_contents('php://input');
+    $data = json_decode($input, true);
+    
+    if (!$data) {
+        parse_str($input, $data);
+    }
+    
+    $username = $data['name'] ?? '';
+    $password = $data['password'] ?? '';
+    $deviceId = $data['deviceId'] ?? '';
+    
+    error_log("Login attempt - Username: $username, Device: $deviceId");
+    
+    // Simple authentication
+    $valid_users = [
+        'admin' => 'admin123',
+        'user' => 'user123', 
+        'test' => 'test123'
+    ];
+    
+    if (isset($valid_users[$username]) && $valid_users[$username] === $password) {
+        // Login successful
+        $response = [
+            'error' => false,
+            'message' => 'Login successful',
+            'user' => [
+                'id' => 1,
+                'name' => $username,
+                'email' => $username . '@goldlab.com',
+                'gender' => 'male',
+                'deviceId' => $deviceId,
+                'status' => '1'
+            ]
+        ];
+    } else {
+        // Login failed
+        $response = [
+            'error' => true,
+            'message' => 'Invalid username or password'
+        ];
+    }
+    
+    echo json_encode($response);
+    exit;
+}
+
+// Default response for other requests
 echo json_encode([
-    'status' => 'online', 
-    'service' => 'GoldLab Auth',
-    'timestamp' => time()
+    'status' => 'GoldLab Auth Server is running',
+    'timestamp' => date('Y-m-d H:i:s'),
+    'endpoint' => 'POST to this URL with name, password, deviceId'
 ]);
 ?>

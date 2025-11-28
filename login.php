@@ -11,11 +11,12 @@ $db_user = getenv('MYSQLUSER');
 $db_pass = getenv('MYSQLPASSWORD');
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $name = $_POST['name'] ?? '';
+    
+    $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
     $deviceId = $_POST['deviceId'] ?? '';
     
-    if (empty($name) || empty($password) || empty($deviceId)) {
+    if (empty($username) || empty($password) || empty($deviceId)) {
         echo json_encode(['error' => true, 'message' => 'Missing fields']);
         exit;
     }
@@ -27,9 +28,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             throw new Exception('DB connection failed');
         }
         
-        // Check user
-        $stmt = $conn->prepare("SELECT * FROM users WHERE name = ?");
-        $stmt->bind_param("s", $name);
+        // Fetch user via username
+        $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
+        $stmt->bind_param("s", $username);
         $stmt->execute();
         $result = $stmt->get_result();
         
@@ -59,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'message' => 'Login successful',
                 'user' => [
                     'id' => (int)$user['id'],
-                    'name' => $user['name'],
+                    'username' => $user['username'],
                     'email' => $user['email'],
                     'gender' => $user['gender'],
                     'deviceId' => $deviceId,
